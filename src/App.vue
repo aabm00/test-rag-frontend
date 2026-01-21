@@ -19,6 +19,8 @@ const registerFullName = ref('')
 
 // App state
 const documents = ref('')
+const selectedFile = ref(null)
+const uploadMode = ref('text') // 'text' or 'pdf'
 const question = ref('')
 const answer = ref(null)
 const history = ref([])
@@ -152,21 +154,56 @@ const logout = () => {
 }
 
 // App functions
+const handleFileSelect = (event) => {
+  const file = event.target.files[0]
+  if (file && file.type === 'application/pdf') {
+    selectedFile.value = file
+  } else if (file) {
+    alert('Por favor selecciona un archivo PDF')
+    event.target.value = ''
+  }
+}
+
 const addDocument = async () => {
-  if (!documents.value.trim()) return
-  
-  loading.value = true
-  try {
-    const docs = documents.value.split('\n').filter(d => d.trim())
-    for (const doc of docs) {
-      await axios.post(`${API_URL}/documents`, { text: doc })
+  if (uploadMode.value === 'text') {
+    if (!documents.value.trim()) return
+    
+    loading.value = true
+    try {
+      const docs = documents.value.split('\n').filter(d => d.trim())
+      for (const doc of docs) {
+        await axios.post(`${API_URL}/documents`, { text: doc })
+      }
+      alert(`${docs.length} documento(s) agregado(s)`)
+      documents.value = ''
+    } catch (error) {
+      alert('Error: ' + (error.response?.data?.detail || error.message))
+    } finally {
+      loading.value = false
     }
-    alert(`${docs.length} documento(s) agregado(s)`)
-    documents.value = ''
-  } catch (error) {
-    alert('Error: ' + (error.response?.data?.detail || error.message))
-  } finally {
-    loading.value = false
+  } else {
+    // PDF upload mode
+    if (!selectedFile.value) return
+    
+    loading.value = true
+    try {
+      const formData = new FormData()
+      formData.append('file', selectedFile.value)
+      
+      await axios.post(`${API_URL}/documents/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      
+      alert(`PDF "${selectedFile.value.name}" subido exitosamente`)
+      selectedFile.value = null
+      // Reset file input
+      const fileInput = document.querySelector('input[type="file"]')
+      if (fileInput) fileInput.value = ''
+    } catch (error) {
+      alert('Error: ' + (error.response?.data?.detail || error.message))
+    } finally {
+      loading.value = false
+    }
   }
 }
 
@@ -324,13 +361,49 @@ onMounted(() => {
       <!-- Tab: Agregar Documentos -->
       <div v-if="activeTab === 'add'" class="tab-content">
         <h2>Agregar Documentos</h2>
-        <textarea
-          v-model="documents"
-          placeholder="Ingresa documentos (uno por línea)"
-          rows="10"
-        ></textarea>
+        
+        <!-- Mode selector -->
+        <div class="upload-mode-selector">
+          <button 
+            @click="uploadMode = 'text'" 
+            :class="{ active: uploadMode === 'text' }"
+            class="mode-btn"
+          >
+            📝 Texto
+          </button>
+          <button 
+            @click="uploadMode = 'pdf'" 
+            :class="{ active: uploadMode === 'pdf' }"
+            class="mode-btn"
+          >
+            📄 PDF
+          </button>
+        </div>
+
+        <!-- Text input mode -->
+        <div v-if="uploadMode === 'text'">
+          <textarea
+            v-model="documents"
+            placeholder="Ingresa documentos (uno por línea)"
+            rows="10"
+          ></textarea>
+        </div>
+
+        <!-- PDF upload mode -->
+        <div v-else class="pdf-upload">
+          <input
+            type="file"
+            accept=".pdf"
+            @change="handleFileSelect"
+            class="file-input"
+          />
+          <p v-if="selectedFile" class="file-selected">
+            ✅ Archivo seleccionado: {{ selectedFile.name }}
+          </p>
+        </div>
+
         <button @click="addDocument" :disabled="loading" class="btn-primary">
-          {{ loading ? 'Agregando...' : 'Agregar Documentos' }}
+          {{ loading ? 'Subiendo...' : (uploadMode === 'pdf' ? 'Subir PDF' : 'Agregar Documentos') }}
         </button>
       </div>
 
@@ -653,5 +726,57 @@ textarea:focus, input:focus {
   text-align: center;
   color: #95a5a6;
   padding: 2rem;
+}
+
+/* Upload mode selector */
+.upload-mode-selector {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: 2px solid #ddd;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.3s;
+}
+
+.mode-btn:hover {
+  border-color: #3498db;
+  background: #f8f9fa;
+}
+
+.mode-btn.active {
+  border-color: #3498db;
+  background: #3498db;
+  color: white;
+}
+
+/* PDF upload styles */
+.pdf-upload {
+  padding: 2rem;
+  border: 2px dashed #ddd;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 1rem;
+  background: #f8f9fa;
+}
+
+.file-input {
+  padding: 0.75rem;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.file-selected {
+  margin-top: 1rem;
+  color: #27ae60;
+  font-weight: 500;
 }
 </style>
