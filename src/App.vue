@@ -48,8 +48,21 @@ const loadHistory = async () => {
   loading.value = true
   try {
     const res = await axios.get(`${API_URL}/history?limit=20`)
-    history.value = res.data.queries
+    console.log('History response:', res.data)
+    
+    // Backend returns array directly
+    if (Array.isArray(res.data)) {
+      history.value = res.data
+    } else if (res.data && Array.isArray(res.data.queries)) {
+      history.value = res.data.queries
+    } else {
+      history.value = []
+    }
+    
+    console.log('History loaded:', history.value.length, 'items')
   } catch (error) {
+    console.error('History error:', error)
+    history.value = [] // Ensure it's always an array
     alert('Error: ' + error.message)
   } finally {
     loading.value = false
@@ -120,11 +133,11 @@ const loadHistory = async () => {
     <div v-if="activeTab === 'history'" class="tab-content">
       <h2>Historial de Consultas</h2>
       
-      <div v-if="history.length === 0" class="empty">
+      <div v-if="!history || history.length === 0" class="empty">
         No hay consultas guardadas
       </div>
 
-      <div v-for="item in history" :key="item.id" class="history-card">
+      <div v-for="item in (history || [])" :key="item.id" class="history-card">
         <div class="history-header">
           <strong>{{ item.question }}</strong>
           <span class="date">{{ new Date(item.created_at).toLocaleString() }}</span>

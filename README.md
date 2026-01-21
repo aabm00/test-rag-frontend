@@ -1,11 +1,35 @@
-# 🤖 Test RAG API
+# 🌐 Test RAG Frontend
 
-Sistema de **Retrieval-Augmented Generation (RAG)** completo construido con FastAPI, PostgreSQL, Qdrant y Ollama.
+Interfaz web para el sistema **Test RAG API** construida con Vue 3 y Vite.
+
+---
+
+## 🚀 Quick Start - How to Run
+
+### Run Frontend Locally
+
+**Prerequisites:** Node.js 22+ installed, Backend API running on `http://localhost:8000`.
+
+```bash
+# Navigate to frontend directory
+cd /mnt/c/dev/workspace/frontend/test-rag-frontend
+
+# Install dependencies
+npm install
+
+# Run development server
+npm run dev
+```
+
+**Access:** http://localhost:5173
+
+**Note:** The frontend expects the backend API to be available at `http://localhost:8000`. Make sure the backend is running before starting the frontend.
 
 ---
 
 ## 📑 Tabla de Contenidos
 
+- [Quick Start - How to Run](#🚀-quick-start---how-to-run)
 - [Proyectos](#📦-proyectos)
 - [Arquitectura](#️🏗️-arquitectura)
 - [Tecnologías](#🚀-tecnologías)
