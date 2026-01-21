@@ -1,9 +1,23 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import axios from 'axios'
 
 const API_URL = 'http://localhost:8000'
 
+// Authentication state
+const isAuthenticated = ref(false)
+const currentUser = ref(null)
+const authMode = ref('login') // 'login' or 'register'
+
+// Auth form data
+const loginEmail = ref('')
+const loginPassword = ref('')
+const registerEmail = ref('')
+const registerUsername = ref('')
+const registerPassword = ref('')
+const registerFullName = ref('')
+
+// App state
 const documents = ref('')
 const question = ref('')
 const answer = ref(null)
@@ -11,6 +25,133 @@ const history = ref([])
 const loading = ref(false)
 const activeTab = ref('add')
 
+// Configure axios to include token
+axios.interceptors.request.use(config => {
+  const token = localStorage.getItem('access_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+}, error => {
+  return Promise.reject(error)
+})
+
+// Handle 401 errors (token expired) - but not during login
+let isLoggingIn = false
+
+axios.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response && error.response.status === 401) {
+      // Only auto-logout if we're already authenticated (not during login)
+      if (isAuthenticated.value && !isLoggingIn) {
+        logout()
+        alert('Sesión expirada. Por favor, inicia sesión nuevamente.')
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
+// Auth functions
+const login = async () => {
+  loading.value = true
+  isLoggingIn = true
+  try {
+    // OAuth2 expects 'username' field but we send email
+    const formData = new FormData()
+    formData.append('username', loginEmail.value)
+    formData.append('password', loginPassword.value)
+
+    const res = await axios.post(`${API_URL}/auth/login`, formData, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+    
+    // Save tokens
+    localStorage.setItem('access_token', res.data.access_token)
+    localStorage.setItem('refresh_token', res.data.refresh_token)
+    
+    // Small delay to ensure localStorage is ready
+    await new Promise(resolve => setTimeout(resolve, 50))
+    
+    // Get user info - the interceptor will add the token
+    const userRes = await axios.get(`${API_URL}/auth/me`)
+    
+    currentUser.value = userRes.data
+    isAuthenticated.value = true
+    
+    // Clear password field
+    loginPassword.value = ''
+    
+    console.log('Login successful:', currentUser.value.username)
+  } catch (error) {
+    console.error('Login error:', error)
+    // Clear tokens on error
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    
+    // Don't show "session expired" for login errors
+    if (error.response?.status === 401) {
+      alert('Email o contraseña incorrectos')
+    } else {
+      alert('Error de login: ' + (error.response?.data?.detail || error.message))
+    }
+  } finally {
+    loading.value = false
+    isLoggingIn = false
+  }
+}
+
+const register = async () => {
+  if (registerPassword.value.length < 8) {
+    alert('La contraseña debe tener al menos 8 caracteres')
+    return
+  }
+  
+  loading.value = true
+  try {
+    await axios.post(`${API_URL}/auth/register`, {
+      email: registerEmail.value,
+      username: registerUsername.value,
+      password: registerPassword.value,
+      full_name: registerFullName.value || null
+    })
+    
+    alert('Registro exitoso! Ahora puedes iniciar sesión.')
+    authMode.value = 'login'
+    loginEmail.value = registerEmail.value
+    
+    // Clear register form
+    registerEmail.value = ''
+    registerUsername.value = ''
+    registerPassword.value = ''
+    registerFullName.value = ''
+  } catch (error) {
+    alert('Error de registro: ' + (error.response?.data?.detail || error.message))
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadCurrentUser = async () => {
+  try {
+    const res = await axios.get(`${API_URL}/auth/me`)
+    currentUser.value = res.data
+    isAuthenticated.value = true
+  } catch (error) {
+    logout()
+  }
+}
+
+const logout = () => {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  isAuthenticated.value = false
+  currentUser.value = null
+  activeTab.value = 'add'
+}
+
+// App functions
 const addDocument = async () => {
   if (!documents.value.trim()) return
   
@@ -23,7 +164,7 @@ const addDocument = async () => {
     alert(`${docs.length} documento(s) agregado(s)`)
     documents.value = ''
   } catch (error) {
-    alert('Error: ' + error.message)
+    alert('Error: ' + (error.response?.data?.detail || error.message))
   } finally {
     loading.value = false
   }
@@ -38,7 +179,7 @@ const askQuestion = async () => {
     const res = await axios.post(`${API_URL}/query`, { question: question.value })
     answer.value = res.data
   } catch (error) {
-    alert('Error: ' + error.message)
+    alert('Error: ' + (error.response?.data?.detail || error.message))
   } finally {
     loading.value = false
   }
@@ -48,9 +189,7 @@ const loadHistory = async () => {
   loading.value = true
   try {
     const res = await axios.get(`${API_URL}/history?limit=20`)
-    console.log('History response:', res.data)
     
-    // Backend returns array directly
     if (Array.isArray(res.data)) {
       history.value = res.data
     } else if (res.data && Array.isArray(res.data.queries)) {
@@ -58,92 +197,187 @@ const loadHistory = async () => {
     } else {
       history.value = []
     }
-    
-    console.log('History loaded:', history.value.length, 'items')
   } catch (error) {
     console.error('History error:', error)
-    history.value = [] // Ensure it's always an array
-    alert('Error: ' + error.message)
+    history.value = []
+    alert('Error: ' + (error.response?.data?.detail || error.message))
   } finally {
     loading.value = false
   }
 }
+
+// Check authentication on mount
+onMounted(() => {
+  const token = localStorage.getItem('access_token')
+  if (token) {
+    loadCurrentUser()
+  }
+})
 </script>
 
 <template>
   <div class="container">
-    <header>
-      <h1>🤖 Test RAG API</h1>
-      <p>FastAPI + PostgreSQL + Qdrant + Ollama</p>
-    </header>
+    <!-- Login/Register Screen -->
+    <div v-if="!isAuthenticated" class="auth-container">
+      <div class="auth-box">
+        <h1>🤖 Test RAG API</h1>
+        <p class="subtitle">FastAPI + PostgreSQL + Qdrant + Ollama</p>
 
-    <div class="tabs">
-      <button @click="activeTab = 'add'" :class="{ active: activeTab === 'add' }">
-        📄 Agregar Documentos
-      </button>
-      <button @click="activeTab = 'query'" :class="{ active: activeTab === 'query' }">
-        💬 Hacer Pregunta
-      </button>
-      <button @click="activeTab = 'history'; loadHistory()" :class="{ active: activeTab === 'history' }">
-        📚 Historial
-      </button>
-    </div>
-
-    <!-- Tab: Agregar Documentos -->
-    <div v-if="activeTab === 'add'" class="tab-content">
-      <h2>Agregar Documentos</h2>
-      <textarea
-        v-model="documents"
-        placeholder="Ingresa documentos (uno por línea)"
-        rows="10"
-      ></textarea>
-      <button @click="addDocument" :disabled="loading" class="btn-primary">
-        {{ loading ? 'Agregando...' : 'Agregar Documentos' }}
-      </button>
-    </div>
-
-    <!-- Tab: Hacer Pregunta -->
-    <div v-if="activeTab === 'query'" class="tab-content">
-      <h2>Hacer Pregunta</h2>
-      <input
-        v-model="question"
-        @keyup.enter="askQuestion"
-        type="text"
-        placeholder="¿Qué quieres saber?"
-        :disabled="loading"
-      />
-      <button @click="askQuestion" :disabled="loading" class="btn-primary">
-        {{ loading ? 'Consultando...' : 'Preguntar' }}
-      </button>
-
-      <div v-if="answer" class="answer-card">
-        <h3>💡 Respuesta:</h3>
-        <p>{{ answer.answer }}</p>
-        
-        <h4>📎 Fuentes:</h4>
-        <ul>
-          <li v-for="(source, idx) in answer.sources" :key="idx">{{ source }}</li>
-        </ul>
-        
-        <small>ID: {{ answer.id }} | Guardado en PostgreSQL</small>
-      </div>
-    </div>
-
-    <!-- Tab: Historial -->
-    <div v-if="activeTab === 'history'" class="tab-content">
-      <h2>Historial de Consultas</h2>
-      
-      <div v-if="!history || history.length === 0" class="empty">
-        No hay consultas guardadas
-      </div>
-
-      <div v-for="item in (history || [])" :key="item.id" class="history-card">
-        <div class="history-header">
-          <strong>{{ item.question }}</strong>
-          <span class="date">{{ new Date(item.created_at).toLocaleString() }}</span>
+        <div class="auth-tabs">
+          <button 
+            @click="authMode = 'login'" 
+            :class="{ active: authMode === 'login' }"
+          >
+            Iniciar Sesión
+          </button>
+          <button 
+            @click="authMode = 'register'" 
+            :class="{ active: authMode === 'register' }"
+          >
+            Registrarse
+          </button>
         </div>
-        <p>{{ item.answer }}</p>
-        <small>{{ item.sources_count }} fuentes | Modelo: {{ item.model }}</small>
+
+        <!-- Login Form -->
+        <div v-if="authMode === 'login'" class="auth-form">
+          <h2>Iniciar Sesión</h2>
+          <input
+            v-model="loginEmail"
+            type="email"
+            placeholder="Email"
+            @keyup.enter="login"
+            :disabled="loading"
+          />
+          <input
+            v-model="loginPassword"
+            type="password"
+            placeholder="Contraseña"
+            @keyup.enter="login"
+            :disabled="loading"
+          />
+          <button @click="login" :disabled="loading" class="btn-primary">
+            {{ loading ? 'Iniciando...' : 'Iniciar Sesión' }}
+          </button>
+        </div>
+
+        <!-- Register Form -->
+        <div v-if="authMode === 'register'" class="auth-form">
+          <h2>Crear Cuenta</h2>
+          <input
+            v-model="registerEmail"
+            type="email"
+            placeholder="Email"
+            :disabled="loading"
+          />
+          <input
+            v-model="registerUsername"
+            type="text"
+            placeholder="Nombre de usuario (mín. 3 caracteres)"
+            :disabled="loading"
+          />
+          <input
+            v-model="registerPassword"
+            type="password"
+            placeholder="Contraseña (mín. 8 caracteres)"
+            :disabled="loading"
+          />
+          <input
+            v-model="registerFullName"
+            type="text"
+            placeholder="Nombre completo (opcional)"
+            :disabled="loading"
+          />
+          <button @click="register" :disabled="loading" class="btn-primary">
+            {{ loading ? 'Registrando...' : 'Crear Cuenta' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main App (authenticated) -->
+    <div v-else>
+      <header>
+        <div class="header-content">
+          <div>
+            <h1>🤖 Test RAG API</h1>
+            <p>FastAPI + PostgreSQL + Qdrant + Ollama</p>
+          </div>
+          <div class="user-info">
+            <span>👤 {{ currentUser?.username }}</span>
+            <button @click="logout" class="btn-logout">Cerrar Sesión</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="tabs">
+        <button @click="activeTab = 'add'" :class="{ active: activeTab === 'add' }">
+          📄 Agregar Documentos
+        </button>
+        <button @click="activeTab = 'query'" :class="{ active: activeTab === 'query' }">
+          💬 Hacer Pregunta
+        </button>
+        <button @click="activeTab = 'history'; loadHistory()" :class="{ active: activeTab === 'history' }">
+          📚 Historial
+        </button>
+      </div>
+
+      <!-- Tab: Agregar Documentos -->
+      <div v-if="activeTab === 'add'" class="tab-content">
+        <h2>Agregar Documentos</h2>
+        <textarea
+          v-model="documents"
+          placeholder="Ingresa documentos (uno por línea)"
+          rows="10"
+        ></textarea>
+        <button @click="addDocument" :disabled="loading" class="btn-primary">
+          {{ loading ? 'Agregando...' : 'Agregar Documentos' }}
+        </button>
+      </div>
+
+      <!-- Tab: Hacer Pregunta -->
+      <div v-if="activeTab === 'query'" class="tab-content">
+        <h2>Hacer Pregunta</h2>
+        <input
+          v-model="question"
+          @keyup.enter="askQuestion"
+          type="text"
+          placeholder="¿Qué quieres saber?"
+          :disabled="loading"
+        />
+        <button @click="askQuestion" :disabled="loading" class="btn-primary">
+          {{ loading ? 'Consultando...' : 'Preguntar' }}
+        </button>
+
+        <div v-if="answer" class="answer-card">
+          <h3>💡 Respuesta:</h3>
+          <p>{{ answer.answer }}</p>
+          
+          <h4>📎 Fuentes:</h4>
+          <ul v-if="answer.sources && answer.sources.length > 0">
+            <li v-for="(source, idx) in answer.sources" :key="idx">{{ source }}</li>
+          </ul>
+          <p v-else class="no-sources">No se utilizaron fuentes específicas</p>
+          
+          <small>ID: {{ answer.id }} | Guardado en PostgreSQL</small>
+        </div>
+      </div>
+
+      <!-- Tab: Historial -->
+      <div v-if="activeTab === 'history'" class="tab-content">
+        <h2>Historial de Consultas</h2>
+        
+        <div v-if="!history || history.length === 0" class="empty">
+          No hay consultas guardadas
+        </div>
+
+        <div v-for="item in (history || [])" :key="item.id" class="history-card">
+          <div class="history-header">
+            <strong>{{ item.question }}</strong>
+            <span class="date">{{ new Date(item.created_at).toLocaleString() }}</span>
+          </div>
+          <p>{{ item.answer }}</p>
+          <small>{{ item.sources_count }} fuentes | Modelo: {{ item.model }}</small>
+        </div>
       </div>
     </div>
   </div>
@@ -159,14 +393,111 @@ const loadHistory = async () => {
   margin: 0 auto;
   padding: 2rem;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  min-height: 100vh;
 }
 
-header {
+/* Auth Styles */
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 80vh;
+}
+
+.auth-box {
+  background: white;
+  padding: 3rem;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 450px;
+}
+
+.auth-box h1 {
   text-align: center;
+  margin: 0 0 0.5rem 0;
+  color: #2c3e50;
+}
+
+.subtitle {
+  text-align: center;
+  color: #7f8c8d;
+  margin-bottom: 2rem;
+  font-size: 0.9rem;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  border-bottom: 2px solid #ecf0f1;
+}
+
+.auth-tabs button {
+  flex: 1;
+  padding: 0.75rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: #7f8c8d;
+  transition: all 0.3s;
+}
+
+.auth-tabs button:hover {
+  color: #2c3e50;
+}
+
+.auth-tabs button.active {
+  color: #3498db;
+  border-bottom: 3px solid #3498db;
+}
+
+.auth-form {
+  animation: fadeIn 0.3s;
+}
+
+.auth-form h2 {
+  color: #2c3e50;
+  margin-bottom: 1.5rem;
+  font-size: 1.3rem;
+}
+
+/* Header with user info */
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 2rem;
 }
 
-h1 {
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.user-info span {
+  color: #2c3e50;
+  font-weight: 500;
+}
+
+.btn-logout {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.btn-logout:hover {
+  background: #c0392b;
+}
+
+header h1 {
   margin: 0;
   color: #2c3e50;
 }
@@ -232,6 +563,7 @@ textarea:focus, input:focus {
 }
 
 .btn-primary {
+  width: 100%;
   background: #3498db;
   color: white;
   border: none;
@@ -288,6 +620,12 @@ textarea:focus, input:focus {
   border-radius: 6px;
   font-size: 0.9rem;
   color: #7f8c8d;
+}
+
+.no-sources {
+  color: #95a5a6;
+  font-style: italic;
+  font-size: 0.9rem;
 }
 
 .history-header {
