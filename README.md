@@ -1,6 +1,6 @@
 # 🌐 Test RAG Frontend
 
-Interfaz web para el sistema **Test RAG API** construida con Vue 3 y Vite.
+Interfaz web para el sistema **Test RAG API** construida con Vue 3 y Vite con soporte para streaming responses en tiempo real.
 
 ---
 

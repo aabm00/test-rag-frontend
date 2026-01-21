@@ -26,6 +26,8 @@ const answer = ref(null)
 const history = ref([])
 const loading = ref(false)
 const activeTab = ref('add')
+const streamingMode = ref(true) // Enable streaming by default
+const isStreaming = ref(false)
 
 // Configure axios to include token
 axios.interceptors.request.use(config => {
@@ -210,6 +212,14 @@ const addDocument = async () => {
 const askQuestion = async () => {
   if (!question.value.trim()) return
   
+  if (streamingMode.value) {
+    await askQuestionStreaming()
+  } else {
+    await askQuestionNormal()
+  }
+}
+
+const askQuestionNormal = async () => {
   loading.value = true
   answer.value = null
   try {
@@ -219,6 +229,76 @@ const askQuestion = async () => {
     alert('Error: ' + (error.response?.data?.detail || error.message))
   } finally {
     loading.value = false
+  }
+}
+
+const askQuestionStreaming = async () => {
+  if (!question.value.trim()) return
+  
+  loading.value = true
+  isStreaming.value = true
+  answer.value = {
+    question: question.value,
+    answer: '',
+    sources: [],
+    model_used: '',
+    created_at: new Date().toISOString()
+  }
+  
+  const token = localStorage.getItem('access_token')
+  
+  try {
+    const response = await fetch(`${API_URL}/query/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ question: question.value })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      
+      const chunk = decoder.decode(value)
+      const lines = chunk.split('\n')
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = JSON.parse(line.substring(6))
+          
+          if (data.type === 'token') {
+            answer.value.answer += data.content
+          } else if (data.type === 'answer') {
+            // Cached response (complete answer)
+            answer.value.answer = data.content
+          } else if (data.type === 'sources') {
+            answer.value.sources = data.sources
+          } else if (data.type === 'done') {
+            answer.value.id = data.id
+          } else if (data.type === 'error') {
+            throw new Error(data.message)
+          } else if (data.type === 'status') {
+            // Optional: show status messages
+            console.log('Status:', data.message)
+          }
+        }
+      }
+    }
+  } catch (error) {
+    alert('Error: ' + (error.message || 'Streaming failed'))
+    answer.value = null
+  } finally {
+    loading.value = false
+    isStreaming.value = false
   }
 }
 
@@ -410,6 +490,15 @@ onMounted(() => {
       <!-- Tab: Hacer Pregunta -->
       <div v-if="activeTab === 'query'" class="tab-content">
         <h2>Hacer Pregunta</h2>
+        
+        <!-- Streaming Mode Toggle -->
+        <div class="streaming-toggle">
+          <label>
+            <input type="checkbox" v-model="streamingMode" :disabled="loading" />
+            <span>⚡ Modo Streaming (respuesta en tiempo real)</span>
+          </label>
+        </div>
+        
         <input
           v-model="question"
           @keyup.enter="askQuestion"
@@ -418,7 +507,7 @@ onMounted(() => {
           :disabled="loading"
         />
         <button @click="askQuestion" :disabled="loading" class="btn-primary">
-          {{ loading ? 'Consultando...' : 'Preguntar' }}
+          {{ loading ? (isStreaming ? 'Generando...' : 'Consultando...') : 'Preguntar' }}
         </button>
 
         <div v-if="answer" class="answer-card">
@@ -726,6 +815,39 @@ textarea:focus, input:focus {
   text-align: center;
   color: #95a5a6;
   padding: 2rem;
+}
+
+/* Streaming Toggle Styles */
+.streaming-toggle {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: #f0f8ff;
+  border-radius: 8px;
+  border-left: 4px solid #3498db;
+}
+
+.streaming-toggle label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.95rem;
+  user-select: none;
+}
+
+.streaming-toggle input[type="checkbox"] {
+  width: auto;
+  margin-right: 0.5rem;
+  cursor: pointer;
+}
+
+.streaming-toggle span {
+  color: #2c3e50;
+  font-weight: 500;
+}
+
+.streaming-toggle input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Upload mode selector */
